@@ -334,7 +334,87 @@ class MessageHandlers:
                     
             except Exception as e:
                 await message.reply(f"❌ Error reading logs: {e}")
-                logger.error(f"Logs command error: {e}")
+        @self.app.on_message(filters.command("testfilter") & filters.private)
+        async def handle_test_filter(client: Client, message: Message):
+            """Test filter functionality"""
+            if not is_admin(message.from_user.id):
+                await message.reply("❌ You are not authorized to use this command.")
+                return
+            
+            try:
+                # Get all filters
+                all_filters = await db.get_all_filters()
+                
+                if not all_filters:
+                    await message.reply("❌ No filters found in database!")
+                    return
+                
+                test_text = "Testing filters:\n\n"
+                
+                for filter_data in all_filters[:5]:  # Test first 5 filters
+                    keyword = filter_data.get("keyword", "unknown")
+                    response = filter_data.get("response", "No response")
+                    
+                    # Test this filter
+                    filter_result = await db.get_filter(keyword)
+                    if filter_result:
+                        test_text += f"✅ **{keyword}** → {response[:30]}{'...' if len(response) > 30 else ''}\n"
+                    else:
+                        test_text += f"❌ **{keyword}** → Filter not working\n"
+                
+                test_text += f"\nTotal filters: {len(all_filters)}"
+                await message.reply(test_text)
+                
+                # Test a simple filter response
+                if all_filters:
+                    first_filter = all_filters[0]
+                    keyword = first_filter.get("keyword")
+                    response = first_filter.get("response")
+                    
+                    await message.reply(f"Testing filter '{keyword}':")
+                    await self.check_filters(message.reply_to_message if hasattr(message, 'reply_to_message') else message)
+                
+            except Exception as e:
+                await message.reply(f"❌ Test filter error: {e}")
+                logger.error(f"Test filter error: {e}")
+        
+        @self.app.on_message(filters.command("forcereact") & filters.private)
+        async def handle_force_react(client: Client, message: Message):
+            """Force test a reaction"""
+            if not is_admin(message.from_user.id):
+                await message.reply("❌ You are not authorized to use this command.")
+                return
+            
+            try:
+                group_id = extract_group_id(message.text)
+                if not group_id:
+                    await message.reply("Usage: `/forcereact -100xxxxxxxxx`")
+                    return
+                
+                # Check if group is connected
+                is_connected = await db.is_group_connected(group_id)
+                if not is_connected:
+                    await message.reply(f"❌ Group {group_id} is not connected!")
+                    return
+                
+                # Send a test message to the group
+                try:
+                    test_msg = await client.send_message(
+                        chat_id=group_id,
+                        text="🧪 **Force Reaction Test**\n\nThis message should get a reaction automatically!"
+                    )
+                    
+                    # Force add reaction
+                    await self.add_reaction(test_msg)
+                    
+                    await message.reply(f"✅ Force reaction test sent to group {group_id}")
+                    
+                except Exception as e:
+                    await message.reply(f"❌ Failed to send test message: {e}")
+                
+            except Exception as e:
+                await message.reply(f"❌ Force react error: {e}")
+                logger.error(f"Force react error: {e}")
             """Handle /help command"""
             if is_private_chat(message):
                 if not is_admin(message.from_user.id):
@@ -353,20 +433,27 @@ class MessageHandlers:
             try:
                 # Skip if no user (system messages, etc.)
                 if not message.from_user:
+                    logger.debug("Skipping message with no user")
                     return
                 
                 # Skip bot messages
                 if message.from_user.is_bot:
+                    logger.debug("Skipping bot message")
                     return
                 
                 # Log every message for debugging
                 logger.info(f"Received message from {format_user_info(message.from_user)} in {format_chat_info(message)}")
                 logger.info(f"Message type: {message.chat.type}, Text: {message.text[:50] if message.text else 'No text'}")
                 
-                # Handle commands separately
+                # Handle commands separately - but allow /test in groups
                 if message.text and message.text.startswith('/'):
                     command = message.text.split()[0].lower()
-                    if command in ['/connect', '/disconnect', '/filter', '/removefilter', '/filters', '/stats', '/help', '/testreact', '/checkgroup']:
+                    # Only skip admin commands in private chat, allow /test in groups
+                    if command in ['/connect', '/disconnect', '/filter', '/removefilter', '/filters', '/stats', '/help', '/testreact', '/checkgroup', '/debug', '/logs']:
+                        if is_private_chat(message):
+                            logger.debug(f"Skipping admin command in PM: {command}")
+                            return
+                    elif command != '/test':  # Allow /test in groups
                         logger.debug(f"Skipping command: {command}")
                         return
                 
@@ -381,14 +468,18 @@ class MessageHandlers:
                         logger.info(f"Group {message.chat.id} is not connected, ignoring message")
                         return
                     
-                    logger.info(f"Adding reaction to message {message.id} in connected group {message.chat.id}")
+                    logger.info(f"✅ Group is connected! Processing message {message.id}")
                     
                     # Add reaction to message
+                    logger.info(f"🎭 Adding reaction to message {message.id}")
                     await self.add_reaction(message)
                     
                     # Check for filters if message has text
                     if message.text:
+                        logger.info(f"🔍 Checking filters for text: {message.text[:30]}")
                         await self.check_filters(message)
+                    else:
+                        logger.info("No text in message, skipping filter check")
                 
                 # Handle private messages from admins
                 elif is_private_chat(message) and is_admin(message.from_user.id):
@@ -396,12 +487,13 @@ class MessageHandlers:
                     
                     # Check for filters in admin PM
                     if message.text:
+                        logger.info("🔍 Checking filters in admin PM")
                         await self.check_filters(message)
                 else:
                     logger.debug(f"Ignoring message from non-admin in private chat: {message.from_user.id}")
                     
             except Exception as e:
-                logger.error(f"Error in handle_all_messages: {e}")
+                logger.error(f"❌ Error in handle_all_messages: {e}")
                 import traceback
                 logger.error(f"Traceback: {traceback.format_exc()}")
     
@@ -436,11 +528,15 @@ class MessageHandlers:
     async def check_filters(self, message: Message):
         """Check message for filters and respond"""
         if not message.text:
+            logger.debug("No text in message for filter check")
             return
         
         try:
+            logger.info(f"🔍 Checking filters for message: '{message.text[:50]}'")
+            
             # Split message into words and check each
             words = message.text.lower().split()
+            logger.info(f"Words to check: {words}")
             
             for word in words:
                 # Clean word (remove punctuation)
@@ -449,19 +545,28 @@ class MessageHandlers:
                 if not clean_word:
                     continue
                 
+                logger.info(f"Checking filter for word: '{clean_word}'")
+                
                 # Check if word matches any filter
                 filter_response = await db.get_filter(clean_word)
                 
                 if filter_response:
+                    logger.info(f"✅ Filter '{clean_word}' matched! Sending response: '{filter_response[:30]}'")
                     await message.reply(filter_response)
                     logger.info(
                         f"Filter '{clean_word}' triggered by {format_user_info(message.from_user)} "
                         f"in {format_chat_info(message)}"
                     )
                     break  # Only respond to first match
+                else:
+                    logger.debug(f"No filter found for word: '{clean_word}'")
+            
+            logger.info("Filter check completed")
                     
         except Exception as e:
-            logger.error(f"Error checking filters: {e}")
+            logger.error(f"❌ Error checking filters: {e}")
+            import traceback
+            logger.error(f"Filter check traceback: {traceback.format_exc()}")
 
 # Create handlers instance
 handlers = None
