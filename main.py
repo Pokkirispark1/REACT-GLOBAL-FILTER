@@ -1,5 +1,7 @@
 import logging
 import asyncio
+import signal
+import sys
 from pyrogram import Client
 from pyrogram.errors import BadRequest
 
@@ -22,6 +24,19 @@ logger = logging.getLogger(__name__)
 class TelegramBot:
     def __init__(self):
         self.app = None
+        self.is_running = False
+        self._shutdown_event = asyncio.Event()
+        
+    def setup_signal_handlers(self):
+        """Setup signal handlers for graceful shutdown"""
+        if sys.platform != 'win32':
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                signal.signal(sig, self._signal_handler)
+    
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals"""
+        logger.info(f"Received signal {signum}, shutting down...")
+        self._shutdown_event.set()
         
     async def initialize(self):
         """Initialize the bot"""
@@ -94,7 +109,12 @@ class TelegramBot:
             await self.initialize()
             
             logger.info("Starting Telegram bot...")
+            
+            # Setup signal handlers
+            self.setup_signal_handlers()
+            
             await self.app.start()
+            self.is_running = True
             
             # Get bot information
             me = await self.app.get_me()
@@ -147,7 +167,16 @@ class TelegramBot:
             print("="*50 + "\n")
             
             # Keep the bot running
-            await self.app.idle()
+            print("🔄 Bot is now running... Press Ctrl+C to stop")
+            logger.info("Bot is now idle and waiting for messages...")
+            
+            # Wait for shutdown signal
+            try:
+                await self._shutdown_event.wait()
+            except KeyboardInterrupt:
+                logger.info("Received keyboard interrupt")
+            finally:
+                logger.info("Shutdown signal received, stopping bot...")
             
         except BadRequest as e:
             if "API_ID" in str(e) or "API_HASH" in str(e):
@@ -177,7 +206,9 @@ class TelegramBot:
         try:
             logger.info("Shutting down bot...")
             
-            if self.app:
+            self.is_running = False
+            
+            if self.app and self.app.is_connected:
                 await self.app.stop()
                 logger.info("Pyrogram client stopped!")
             
