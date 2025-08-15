@@ -2,7 +2,7 @@ import logging
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from pyrogram.errors import ChatAdminRequired, UserNotParticipant, FloodWait, ReactionInvalid
+from pyrogram.errors import ChatAdminRequired, UserNotParticipant, FloodWait, BadRequest
 
 from database import db
 from utils import (
@@ -228,8 +228,8 @@ class MessageHandlers:
             reaction = get_random_reaction()
             await message.react(emoji=reaction, big=True)
             
-        except ReactionInvalid:
-            # Try with default reaction
+        except BadRequest as e:
+            # Try with default reaction if reaction is invalid
             try:
                 await message.react(emoji=Config.DEFAULT_REACTION, big=True)
             except Exception as e:
