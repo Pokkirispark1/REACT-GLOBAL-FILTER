@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from pyrogram import Client
-from pyrogram.errors import ApiIdInvalid, ApiHashInvalid, AccessTokenInvalid
+from pyrogram.errors import BadRequest
 
 from config import Config
 from database import db
@@ -149,18 +149,27 @@ class TelegramBot:
             # Keep the bot running
             await self.app.idle()
             
-        except ApiIdInvalid:
-            logger.error("❌ Invalid API_ID! Please check your configuration.")
-            print("❌ ERROR: Invalid API_ID! Please check your .env file.")
-        except ApiHashInvalid:
-            logger.error("❌ Invalid API_HASH! Please check your configuration.")
-            print("❌ ERROR: Invalid API_HASH! Please check your .env file.")
-        except AccessTokenInvalid:
-            logger.error("❌ Invalid BOT_TOKEN! Please check your configuration.")
-            print("❌ ERROR: Invalid BOT_TOKEN! Please check your .env file.")
+        except BadRequest as e:
+            if "API_ID" in str(e) or "API_HASH" in str(e):
+                logger.error("❌ Invalid API credentials! Please check your API_ID and API_HASH.")
+                print("❌ ERROR: Invalid API credentials! Please check your .env file.")
+            elif "BOT_TOKEN" in str(e) or "token" in str(e).lower():
+                logger.error("❌ Invalid BOT_TOKEN! Please check your bot token.")
+                print("❌ ERROR: Invalid BOT_TOKEN! Please check your .env file.")
+            else:
+                logger.error(f"❌ Bad request error: {e}")
+                print(f"❌ ERROR: {e}")
         except Exception as e:
-            logger.error(f"❌ Failed to start bot: {e}")
-            print(f"❌ ERROR: Failed to start bot: {e}")
+            error_msg = str(e).lower()
+            if "api_id" in error_msg or "api_hash" in error_msg:
+                logger.error("❌ Invalid API credentials! Please check your API_ID and API_HASH.")
+                print("❌ ERROR: Invalid API credentials! Please check your .env file.")
+            elif "token" in error_msg:
+                logger.error("❌ Invalid BOT_TOKEN! Please check your bot token.")
+                print("❌ ERROR: Invalid BOT_TOKEN! Please check your .env file.")
+            else:
+                logger.error(f"❌ Failed to start bot: {e}")
+                print(f"❌ ERROR: Failed to start bot: {e}")
             raise
     
     async def stop(self):
