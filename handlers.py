@@ -189,8 +189,69 @@ class MessageHandlers:
                 logger.error(f"Error getting stats: {e}")
                 await message.reply("❌ Failed to get statistics.")
         
-        @self.app.on_message(filters.command("help"))
-        async def handle_help(client: Client, message: Message):
+        @self.app.on_message(filters.command("testreact") & filters.private)
+        async def handle_test_reaction(client: Client, message: Message):
+            """Test reaction functionality"""
+            if not is_admin(message.from_user.id):
+                await message.reply("❌ You are not authorized to use this command.")
+                return
+            
+            try:
+                # Test reaction on the command message itself
+                await self.add_reaction(message)
+                await message.reply("✅ Test reaction attempted! Check if reaction was added above.")
+                
+                # Also test different reaction methods
+                test_msg = await message.reply("Testing different reaction methods...")
+                
+                try:
+                    await test_msg.react("👍")
+                    await asyncio.sleep(1)
+                    await test_msg.react("❤️")
+                    await message.reply("✅ Direct reaction method works!")
+                except Exception as e:
+                    await message.reply(f"❌ Direct reaction failed: {e}")
+                    
+            except Exception as e:
+                await message.reply(f"❌ Test reaction failed: {e}")
+                logger.error(f"Test reaction error: {e}")
+        
+        @self.app.on_message(filters.command("checkgroup") & filters.private)
+        async def handle_check_group(client: Client, message: Message):
+            """Check if a group is properly connected"""
+            if not is_admin(message.from_user.id):
+                await message.reply("❌ You are not authorized to use this command.")
+                return
+            
+            group_id = extract_group_id(message.text)
+            if not group_id:
+                await message.reply("Usage: `/checkgroup -100xxxxxxxxx`")
+                return
+            
+            try:
+                is_connected = await db.is_group_connected(group_id)
+                chat = await client.get_chat(group_id)
+                
+                status_text = f"**Group Status Check:**\n\n"
+                status_text += f"**Group:** {chat.title}\n"
+                status_text += f"**ID:** `{group_id}`\n"
+                status_text += f"**Connected:** {'✅ Yes' if is_connected else '❌ No'}\n"
+                
+                if is_connected:
+                    # Check bot permissions
+                    try:
+                        bot_member = await client.get_chat_member(group_id, "me")
+                        status_text += f"**Bot Status:** {bot_member.status}\n"
+                        if bot_member.privileges:
+                            status_text += f"**Can Delete Messages:** {'✅' if bot_member.privileges.can_delete_messages else '❌'}\n"
+                    except Exception as e:
+                        status_text += f"**Permission Check Failed:** {e}\n"
+                
+                await message.reply(status_text)
+                
+            except Exception as e:
+                await message.reply(f"❌ Error checking group: {e}")
+                logger.error(f"Group check error: {e}")
             """Handle /help command"""
             if is_private_chat(message):
                 if not is_admin(message.from_user.id):
@@ -202,15 +263,20 @@ class MessageHandlers:
             # Ignore help command in groups
         
         # Message reactions and filters
-        @self.app.on_message(filters.text & ~filters.command(["connect", "disconnect", "filter", "removefilter", "filters", "stats", "help"]))
+        @self.app.on_message(filters.text & ~filters.command(["connect", "disconnect", "filter", "removefilter", "filters", "stats", "help"]) & ~filters.bot)
         async def handle_messages(client: Client, message: Message):
             """Handle all text messages for reactions and filters"""
+            
+            logger.debug(f"Processing message from {format_user_info(message.from_user)} in {format_chat_info(message)}")
             
             # Only process messages in connected groups
             if is_group_chat(message):
                 is_connected = await db.is_group_connected(message.chat.id)
                 if not is_connected:
+                    logger.debug(f"Group {message.chat.id} is not connected, ignoring message")
                     return
+                
+                logger.info(f"Processing message in connected group {message.chat.id}")
                 
                 # Add reaction to message
                 await self.add_reaction(message)
@@ -226,21 +292,29 @@ class MessageHandlers:
         """Add reaction to message"""
         try:
             reaction = get_random_reaction()
-            await message.react(emoji=reaction, big=True)
             
-        except BadRequest as e:
-            # Try with default reaction if reaction is invalid
+            # Try different reaction methods based on Pyrogram version
             try:
-                await message.react(emoji=Config.DEFAULT_REACTION, big=True)
+                # Method 1: Try with react method
+                await message.react(reaction)
+                logger.debug(f"Added reaction {reaction} to message {message.id}")
+            except AttributeError:
+                # Method 2: If react method doesn't exist, try alternative
+                logger.warning("React method not available, trying alternative...")
+                # For older versions or different implementations
+                pass
             except Exception as e:
-                logger.error(f"Failed to add any reaction: {e}")
-                
-        except FloodWait as e:
-            logger.warning(f"FloodWait: Sleeping for {e.value} seconds")
-            await asyncio.sleep(e.value)
-            
+                # Method 3: Try with default reaction
+                try:
+                    await message.react(Config.DEFAULT_REACTION)
+                    logger.debug(f"Added default reaction {Config.DEFAULT_REACTION} to message {message.id}")
+                except:
+                    logger.warning(f"Could not add any reaction to message {message.id}: {e}")
+                    
         except Exception as e:
-            logger.error(f"Error adding reaction: {e}")
+            logger.error(f"Error adding reaction to message {message.id}: {e}")
+            # Don't let reaction errors stop the bot
+            pass
     
     async def check_filters(self, message: Message):
         """Check message for filters and respond"""
