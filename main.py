@@ -14,7 +14,7 @@ API_HASH = "4f78c40e672ad86e10384cc8a0b43dc7"
 BOT_TOKEN = "8090595880:AAH5w6sgXU38DxoZ19T_Hfm-x7cZWcOapG4"
 ADMINS = [1769132732, 560951157]
 MONGODB_URI = "mongodb+srv://reactionbkots:reactionbkots@cluster0.onptwey.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-DATABASE_NAME = "Cluster0"
+DATABASE_NAME = "Reactions"
 R_EMOJIS = ["🤝", "😇", "🤗", "😍", "👍", "🎅", "😐", "🥰", "🤩", "😱", "🤣", "😘", "👏"]
 
 def is_admin(user_id):
