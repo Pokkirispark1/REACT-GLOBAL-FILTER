@@ -10,6 +10,11 @@ from filters_handler import handle_filters, filter_command, list_filters_command
 API_ID = "your_api_id"
 API_HASH = "your_api_hash"
 BOT_TOKEN = "your_bot_token"
+ADMINS = [123456789, 987654321]  # Add admin user IDs here
+
+def is_admin(user_id):
+    """Check if user is admin"""
+    return user_id in ADMINS
 
 app = Client("telegram_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
@@ -25,6 +30,11 @@ async def start_command(client, message: Message):
 
 @app.on_message(filters.command("connect") & filters.private)
 async def connect_command(client, message: Message):
+    # Check if user is admin
+    if not is_admin(message.from_user.id):
+        await message.reply_text("❌ Only admins can use this command!")
+        return
+        
     try:
         if len(message.command) < 2:
             await message.reply_text("Usage: /connect -100xxxxxxx")
@@ -71,14 +81,26 @@ async def group_message_handler(client, message: Message):
 # Filter management commands
 @app.on_message(filters.command("filter") & filters.private)
 async def set_filter(client, message: Message):
+    # Check if user is admin
+    if not is_admin(message.from_user.id):
+        await message.reply_text("❌ Only admins can use this command!")
+        return
     await filter_command(client, message)
 
 @app.on_message(filters.command("filters") & filters.private) 
 async def list_filters(client, message: Message):
+    # Check if user is admin
+    if not is_admin(message.from_user.id):
+        await message.reply_text("❌ Only admins can use this command!")
+        return
     await list_filters_command(client, message)
 
 @app.on_message(filters.command("delfilter") & filters.private)
 async def delete_filter(client, message: Message):
+    # Check if user is admin
+    if not is_admin(message.from_user.id):
+        await message.reply_text("❌ Only admins can use this command!")
+        return
     await del_filter_command(client, message)
 
 async def main():
