@@ -1,10 +1,8 @@
-# main.py
-
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import os
-from database import init_db, get_connected_groups, is_group_connected
+from database import init_db, get_connected_groups, is_group_connected, init_database_config
 from reactions import handle_reactions
 from filters_handler import handle_filters, filter_command, list_filters_command, del_filter_command
 
@@ -23,8 +21,6 @@ def is_admin(user_id):
 
 app = Client("telegram_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# ... rest of your script remains unchanged ...
-
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message: Message):
     await message.reply_text(
@@ -37,6 +33,7 @@ async def start_command(client, message: Message):
 
 @app.on_message(filters.command("connect") & filters.private)
 async def connect_command(client, message: Message):
+    # Check if user is admin
     if not is_admin(message.from_user.id):
         await message.reply_text("❌ Only admins can use this command!")
         return
@@ -49,6 +46,7 @@ async def connect_command(client, message: Message):
         chat_id = int(message.command[1])
         user_id = message.from_user.id
         
+        # Check if user is admin in the target group
         try:
             member = await client.get_chat_member(chat_id, user_id)
             if member.status not in ["administrator", "creator"]:
@@ -58,6 +56,7 @@ async def connect_command(client, message: Message):
             await message.reply_text("Invalid group ID or bot is not in the group!")
             return
         
+        # Save connection to database
         from database import save_connection
         await save_connection(chat_id, user_id)
         
@@ -72,14 +71,20 @@ async def connect_command(client, message: Message):
 async def group_message_handler(client, message: Message):
     chat_id = message.chat.id
     
+    # Check if group is connected
     if not await is_group_connected(chat_id):
         return
     
+    # Handle reactions
     await handle_reactions(client, message)
+    
+    # Handle filters
     await handle_filters(client, message)
 
+# Filter management commands
 @app.on_message(filters.command("filter") & filters.private)
 async def set_filter(client, message: Message):
+    # Check if user is admin
     if not is_admin(message.from_user.id):
         await message.reply_text("❌ Only admins can use this command!")
         return
@@ -87,6 +92,7 @@ async def set_filter(client, message: Message):
 
 @app.on_message(filters.command("filters") & filters.private) 
 async def list_filters(client, message: Message):
+    # Check if user is admin
     if not is_admin(message.from_user.id):
         await message.reply_text("❌ Only admins can use this command!")
         return
@@ -94,12 +100,15 @@ async def list_filters(client, message: Message):
 
 @app.on_message(filters.command("delfilter") & filters.private)
 async def delete_filter(client, message: Message):
+    # Check if user is admin
     if not is_admin(message.from_user.id):
         await message.reply_text("❌ Only admins can use this command!")
         return
     await del_filter_command(client, message)
 
 async def main():
+    # Initialize database configuration first
+    init_database_config(MONGODB_URI, DATABASE_NAME)
     await init_db()
     await app.start()
     print("Bot started successfully!")
