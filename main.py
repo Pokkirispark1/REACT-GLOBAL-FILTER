@@ -110,9 +110,8 @@ async def main():
     # Initialize database configuration first
     init_database_config(MONGODB_URI, DATABASE_NAME)
     await init_db()
-    await app.start()
     print("Bot started successfully!")
-    await asyncio.Event().wait()
+    await app.run()
 
 if __name__ == "__main__":
     asyncio.run(main())
