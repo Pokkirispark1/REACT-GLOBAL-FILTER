@@ -106,12 +106,11 @@ async def delete_filter(client, message: Message):
         return
     await del_filter_command(client, message)
 
-@app.on_ready
-async def on_startup():
-    """Called when bot starts"""
+async def startup():
+    """Initialize database when bot starts"""
     init_database_config(MONGODB_URI, DATABASE_NAME)
     await init_db()
     print("Bot started successfully!")
 
 if __name__ == "__main__":
-    app.run()
+    app.run(startup())
