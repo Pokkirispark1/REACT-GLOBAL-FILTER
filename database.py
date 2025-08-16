@@ -1,17 +1,31 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 
-# MongoDB configuration
-MONGODB_URI = "mongodb+srv://reactionbkots:reactionbkots@cluster0.onptwey.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"  # Change this to your MongoDB URI
-DATABASE_NAME = "telegram_bot"
+# Import from main config (will be set by main.py)
+MONGODB_URI = None
+DATABASE_NAME = None
+client = None
+db = None
 
-client = AsyncIOMotorClient(MONGODB_URI)
-db = client[DATABASE_NAME]
+def init_database_config(mongodb_uri, database_name):
+    """Initialize database configuration"""
+    global MONGODB_URI, DATABASE_NAME, client, db
+    MONGODB_URI = mongodb_uri
+    DATABASE_NAME = database_name
+    client = AsyncIOMotorClient(MONGODB_URI)
+    db = client[DATABASE_NAME]
 connections_collection = db.connections
 filters_collection = db.filters
 
 async def init_db():
     """Initialize database collections"""
+    global db
+    if db is None:
+        raise Exception("Database not configured. Call init_database_config() first.")
+    
+    connections_collection = db.connections
+    filters_collection = db.filters
+    
     # Create indexes for better performance
     await connections_collection.create_index("chat_id", unique=True)
     await filters_collection.create_index([("chat_id", 1), ("keyword", 1)], unique=True)
