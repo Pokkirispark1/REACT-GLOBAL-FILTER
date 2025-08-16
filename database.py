@@ -2,7 +2,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 
 # MongoDB configuration
-MONGODB_URI = "mongodb://localhost:27017"  # Change this to your MongoDB URI
+MONGODB_URI = "mongodb+srv://reactionbkots:reactionbkots@cluster0.onptwey.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"  # Change this to your MongoDB URI
 DATABASE_NAME = "telegram_bot"
 
 client = AsyncIOMotorClient(MONGODB_URI)
