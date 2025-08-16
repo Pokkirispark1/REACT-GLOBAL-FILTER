@@ -9,5 +9,6 @@ class configVars:
     DB_URI = environ.get("DB_URI", "mongodb+srv://reactionbkots:reactionbkots@cluster0.onptwey.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
     ADMINS = list(map(int, environ.get("ADMINS", "1769132732 560951157").split()))
     START_MESSAGE = environ.get("START_MESSAGE", "Hello! I'm an auto-reaction and filter bot. Admins can use /connect <group_id> to connect a group, /filter <keyword> <response> to set a filter, /delfilter <keyword> to delete a filter, and /listfilters to view all filters.")
-    CHAT_DATA = {}  # Dictionary for in-memory cache
+    CHAT_DATA = {} # Dictionary for in-memory cache
+    CLOUDINARY_URL = environ.get("CLOUDINARY_URL", "")
     R_EMOJIS = ["🤝", "😇", "🤗", "😍", "👍", "🎅", "😐", "🥰", "🤩", "😱", "🤣", "😘", "👏"]  # Fixed invalid emoji
