@@ -1,14 +1,13 @@
-from os import environ
+API_ID = 12345678  # Get from https://my.telegram.org
+API_HASH = "your_api_hash_here"  # Get from https://my.telegram.org
+BOT_TOKEN = "your_bot_token_here"  # Get from @BotFather
 
-# Configuration variables for the application
-class configVars:
-    BOT_TOKEN = environ.get("BOT_TOKEN", "8090595880:AAH5w6sgXU38DxoZ19T_Hfm-x7cZWcOapG4")
-    API_ID = int(environ.get("API_ID", 28723907))
-    API_HASH = environ.get("API_HASH", "390ab5f4798822d2a0eb5b85c4fb7d6c")
-    LOG_CHANNEL = int(environ.get("LOG_CHANNEL", -1002077780554))
-    DB_URI = environ.get("DB_URI", "mongodb+srv://reactionbkots:reactionbkots@cluster0.onptwey.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
-    ADMINS = list(map(int, environ.get("ADMINS", "1769132732 560951157").split()))
-    START_MESSAGE = environ.get("START_MESSAGE", "Hello! I'm an auto-reaction and filter bot. Admins can use /connect <group_id> to connect a group, /filter <keyword> <response> to set a filter, /delfilter <keyword> to delete a filter, and /listfilters to view all filters.")
-    CHAT_DATA = {} # Dictionary for in-memory cache
-    CLOUDINARY_URL = environ.get("CLOUDINARY_URL", "")
-    R_EMOJIS = ["🤝", "😇", "🤗", "😍", "👍", "🎅", "😐", "🥰", "🤩", "😱", "🤣", "😘", "👏"]  # Fixed invalid emoji
+# MongoDB Configuration
+MONGODB_URI = "mongodb://localhost:27017"  # Change to your MongoDB URI
+DATABASE_NAME = "telegram_bot"
+
+# Admin Configuration
+ADMINS = [123456789, 987654321]  # Add admin user IDs here
+
+# Reaction Emojis
+R_EMOJIS = ["🤝", "😇", "🤗", "😍", "👍", "🎅", "😐", "🥰", "🤩", "😱", "🤣", "😘", "👏"]
