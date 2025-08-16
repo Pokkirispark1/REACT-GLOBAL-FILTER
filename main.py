@@ -1,312 +1,205 @@
-import logging
 import asyncio
-import signal
-import sys
-from pyrogram import Client
-from pyrogram.errors import BadRequest
+from pyrogram import Client, filters
+from pyrogram.types import Message
+from config_vars import configVars
+import random
+import logging
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 
-from config import Config
-from database import db
-from handlers import setup_handlers
-
-# Setup logging
-logging.basicConfig(
-    level=getattr(logging, Config.LOG_LEVEL),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
-)
-
+# Set up logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class TelegramBot:
-    def __init__(self):
-        self.app = None
-        self.is_running = False
-        self._shutdown_event = asyncio.Event()
-        
-    def setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown"""
-        if sys.platform != 'win32':
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                signal.signal(sig, self._signal_handler)
-    
-    def _signal_handler(self, signum, frame):
-        """Handle shutdown signals"""
-        logger.info(f"Received signal {signum}, shutting down...")
-        self._shutdown_event.set()
-        
-    async def initialize(self):
-        """Initialize the bot"""
-        try:
-            # Validate configuration
-            if not self.validate_config():
-                raise ValueError("Invalid configuration")
-            
-            # Create Pyrogram client
-            self.app = Client(
-                "reaction_filter_bot",
-                api_id=Config.API_ID,
-                api_hash=Config.API_HASH,
-                bot_token=Config.BOT_TOKEN
-            )
-            
-            # Connect to database
-            await db.connect()
-            
-            # Setup message handlers
-            setup_handlers(self.app)
-            
-            logger.info("Bot initialization completed!")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize bot: {e}")
-            raise
-    
-    def validate_config(self) -> bool:
-        """Validate bot configuration"""
-        try:
-            # Check required fields
-            required_fields = [
-                (Config.API_ID, "API_ID"),
-                (Config.API_HASH, "API_HASH"),
-                (Config.BOT_TOKEN, "BOT_TOKEN"),
-                (Config.MONGO_URL, "MONGO_URL"),
-                (Config.ADMINS, "ADMINS")
-            ]
-            
-            for value, name in required_fields:
-                if not value or (isinstance(value, str) and value.strip() in ['', 'your_api_hash_here', 'your_bot_token_here']):
-                    logger.error(f"Missing or invalid {name} in configuration!")
-                    return False
-            
-            # Validate API ID
-            if not isinstance(Config.API_ID, int) or Config.API_ID <= 0:
-                logger.error("API_ID must be a positive integer!")
-                return False
-            
-            # Validate admins list
-            if not Config.ADMINS or not all(isinstance(admin, int) for admin in Config.ADMINS):
-                logger.error("ADMINS must be a list of integers!")
-                return False
-            
-            # Validate reactions list
-            if not Config.REACTIONS:
-                logger.warning("No reactions configured, using default reaction only")
-            
-            logger.info("Configuration validation passed!")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Configuration validation failed: {e}")
-            return False
-    
-    async def start(self):
-        """Start the bot"""
-        try:
-            await self.initialize()
-            
-            logger.info("Starting Telegram bot...")
-            
-            # Setup signal handlers
-            self.setup_signal_handlers()
-            
-            await self.app.start()
-            self.is_running = True
-            
-            # Get bot information
-            me = await self.app.get_me()
-            logger.info(f"Bot started successfully!")
-            logger.info(f"Bot Name: {me.first_name}")
-            logger.info(f"Bot Username: @{me.username}")
-            logger.info(f"Bot ID: {me.id}")
-            
-            # Print startup information
-            connected_groups = await db.get_connected_groups()
-            total_filters = await db.get_all_filters()
-            
-            logger.info(f"Connected Groups: {len(connected_groups)}")
-            logger.info(f"Active Filters: {len(total_filters)}")
-            logger.info(f"Total Admins: {len(Config.ADMINS)}")
-            logger.info("Bot is ready to receive messages!")
-            
-            # Print admin information
-            logger.info("Authorized Admins:")
-            for admin_id in Config.ADMINS:
-                logger.info(f"  - Admin ID: {admin_id}")
-            
-            # Print connected groups information
-            if connected_groups:
-                logger.info("Connected Groups:")
-                for group in connected_groups:
-                    logger.info(f"  - {group.get('group_title', 'Unknown')} (ID: {group.get('group_id')})")
-            else:
-                logger.info("No groups connected yet. Use /connect command to add groups.")
-            
-            # Print active filters information
-            if total_filters:
-                logger.info(f"Active Filters: {len(total_filters)} filters loaded")
-            else:
-                logger.info("No filters configured yet. Use /filter command to add filters.")
-            
-            print("\n" + "="*50)
-            print("🤖 TELEGRAM REACTION & FILTER BOT")
-            print("="*50)
-            print(f"✅ Bot Username: @{me.username}")
-            print(f"✅ Bot ID: {me.id}")
-            print(f"✅ Connected Groups: {len(connected_groups)}")
-            print(f"✅ Active Filters: {len(total_filters)}")
-            print(f"✅ Total Reactions: {len(Config.REACTIONS)}")
-            print(f"✅ Authorized Admins: {len(Config.ADMINS)}")
-            print("="*50)
-            print("🚀 Bot is now ONLINE and ready!")
-            print("📝 Check bot.log for detailed logs")
-            print("⚡ Use Ctrl+C to stop the bot")
-            print("="*50 + "\n")
-            
-            # Keep the bot running
-            print("🔄 Bot is now running... Press Ctrl+C to stop")
-            logger.info("Bot is now idle and waiting for messages...")
-            
-            # Wait for shutdown signal
+# Initialize MongoDB
+try:
+    mongo_client = MongoClient(configVars.DB_URI)
+    db = mongo_client["AutoReactionBot"]
+    groups_collection = db["connected_groups"]
+    filters_collection = db["filters"]
+    # Test connection
+    mongo_client.admin.command("ping")
+    logger.info("Connected to MongoDB")
+except ConnectionFailure as e:
+    logger.error(f"Failed to connect to MongoDB: {str(e)}")
+    raise SystemExit("MongoDB connection failed. Please check DB_URI.")
+
+# Initialize the bot
+app = Client(
+    "AutoReactionBot",
+    api_id=configVars.API_ID,
+    api_hash=configVars.API_HASH,
+    bot_token=configVars.BOT_TOKEN
+)
+
+# Initialize in-memory cache
+configVars.CHAT_DATA["connected_groups"] = set(
+    doc["group_id"] for doc in groups_collection.find()
+)
+configVars.CHAT_DATA["filters"] = {
+    doc["keyword"]: doc["response"] for doc in filters_collection.find()
+}
+
+# Helper function to check if user is admin
+def is_admin(user_id):
+    return user_id in configVars.ADMINS
+
+# Command: /start
+@app.on_message(filters.command("start") & filters.private)
+async def start_command(client: Client, message: Message):
+    await message.reply(configVars.START_MESSAGE)
+
+# Command: /connect <group_id>
+@app.on_message(filters.command("connect") & filters.private)
+async def connect_command(client: Client, message: Message):
+    if not is_admin(message.from_user.id):
+        await message.reply("Only admins can use this command.")
+        return
+
+    args = message.text.split()
+    if len(args) != 2:
+        await message.reply("Usage: /connect <group_id>")
+        return
+
+    try:
+        group_id = int(args[1])
+        # Verify if the bot is in the group
+        chat = await client.get_chat(group_id)
+        if chat.type not in ["group", "supergroup"]:
+            await message.reply("Invalid group ID. Please provide a valid group ID.")
+            return
+
+        # Save to MongoDB and cache
+        groups_collection.update_one(
+            {"group_id": group_id},
+            {"$set": {"group_id": group_id}},
+            upsert=True
+        )
+        configVars.CHAT_DATA["connected_groups"].add(group_id)
+        await message.reply(f"Connected to group {group_id}.")
+        await client.send_message(
+            configVars.LOG_CHANNEL,
+            f"Connected to group {group_id} by {message.from_user.id}"
+        )
+    except Exception as e:
+        await message.reply(f"Error: {str(e)}")
+        logger.error(f"Connect command error: {str(e)}")
+
+# Command: /filter <keyword> <response>
+@app.on_message(filters.command("filter") & filters.private)
+async def filter_command(client: Client, message: Message):
+    if not is_admin(message.from_user.id):
+        await message.reply("Only admins can use this command.")
+        return
+
+    args = message.text.split(maxsplit=2)
+    if len(args) < 3:
+        await message.reply("Usage: /filter <keyword> <response>")
+        return
+
+    keyword = args[1].lower()
+    response = args[2]
+    # Save to MongoDB and cache
+    filters_collection.update_one(
+        {"keyword": keyword},
+        {"$set": {"keyword": keyword, "response": response}},
+        upsert=True
+    )
+    configVars.CHAT_DATA["filters"][keyword] = response
+    await message.reply(f"Filter set: '{keyword}' -> '{response}'")
+    await client.send_message(
+        configVars.LOG_CHANNEL,
+        f"Filter added: '{keyword}' -> '{response}' by {message.from_user.id}"
+    )
+
+# Command: /delfilter <keyword>
+@app.on_message(filters.command("delfilter") & filters.private)
+async def delfilter_command(client: Client, message: Message):
+    if not is_admin(message.from_user.id):
+        await message.reply("Only admins can use this command.")
+        return
+
+    args = message.text.split()
+    if len(args) != 2:
+        await message.reply("Usage: /delfilter <keyword>")
+        return
+
+    keyword = args[1].lower()
+    if keyword not in configVars.CHAT_DATA["filters"]:
+        await message.reply(f"No filter found for keyword: '{keyword}'")
+        return
+
+    # Remove from MongoDB and cache
+    filters_collection.delete_one({"keyword": keyword})
+    del configVars.CHAT_DATA["filters"][keyword]
+    await message.reply(f"Filter for '{keyword}' deleted.")
+    await client.send_message(
+        configVars.LOG_CHANNEL,
+        f"Filter deleted: '{keyword}' by {message.from_user.id}"
+    )
+
+# Command: /listfilters
+@app.on_message(filters.command("listfilters") & filters.private)
+async def listfilters_command(client: Client, message: Message):
+    if not is_admin(message.from_user.id):
+        await message.reply("Only admins can use this command.")
+        return
+
+    if not configVars.CHAT_DATA["filters"]:
+        await message.reply("No filters set.")
+        return
+
+    filter_list = "\n".join(
+        f"- '{k}' -> '{v}'" for k, v in configVars.CHAT_DATA["filters"].items()
+    )
+    await message.reply(f"Current filters:\n{filter_list}")
+    await client.send_message(
+        configVars.LOG_CHANNEL,
+        f"Filter list requested by {message.from_user.id}"
+    )
+
+# Handle new messages in connected groups
+@app.on_message(filters.group & filters.text)
+async def handle_group_message(client: Client, message: Message):
+    chat_id = message.chat.id
+    if chat_id not in configVars.CHAT_DATA["connected_groups"]:
+        return
+
+    # Auto-reaction with random emoji
+    try:
+        emoji = random.choice(configVars.R_EMOJIS)
+        await client.set_reaction(chat_id, message.id, emoji)
+        logger.info(f"Reacted with {emoji} to message {message.id} in {chat_id}")
+    except Exception as e:
+        logger.error(f"Error setting reaction: {str(e)}")
+        await client.send_message(
+            configVars.LOG_CHANNEL,
+            f"Failed to react in {chat_id}: {str(e)}"
+        )
+
+    # Check for keyword filters
+    message_text = message.text.lower()
+    for keyword, response in configVars.CHAT_DATA["filters"].items():
+        if keyword in message_text:
             try:
-                await self._shutdown_event.wait()
-            except KeyboardInterrupt:
-                logger.info("Received keyboard interrupt")
-            finally:
-                logger.info("Shutdown signal received, stopping bot...")
-            
-        except BadRequest as e:
-            if "API_ID" in str(e) or "API_HASH" in str(e):
-                logger.error("❌ Invalid API credentials! Please check your API_ID and API_HASH.")
-                print("❌ ERROR: Invalid API credentials! Please check your .env file.")
-            elif "BOT_TOKEN" in str(e) or "token" in str(e).lower():
-                logger.error("❌ Invalid BOT_TOKEN! Please check your bot token.")
-                print("❌ ERROR: Invalid BOT_TOKEN! Please check your .env file.")
-            else:
-                logger.error(f"❌ Bad request error: {e}")
-                print(f"❌ ERROR: {e}")
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "api_id" in error_msg or "api_hash" in error_msg:
-                logger.error("❌ Invalid API credentials! Please check your API_ID and API_HASH.")
-                print("❌ ERROR: Invalid API credentials! Please check your .env file.")
-            elif "token" in error_msg:
-                logger.error("❌ Invalid BOT_TOKEN! Please check your bot token.")
-                print("❌ ERROR: Invalid BOT_TOKEN! Please check your .env file.")
-            else:
-                logger.error(f"❌ Failed to start bot: {e}")
-                print(f"❌ ERROR: Failed to start bot: {e}")
-            raise
-    
-    async def stop(self):
-        """Stop the bot"""
-        try:
-            logger.info("Shutting down bot...")
-            
-            self.is_running = False
-            
-            if self.app and self.app.is_connected:
-                await self.app.stop()
-                logger.info("Pyrogram client stopped!")
-            
-            await db.disconnect()
-            logger.info("Database disconnected!")
-            
-            logger.info("Bot shutdown completed successfully!")
-            print("\n👋 Bot stopped successfully!")
-            
-        except Exception as e:
-            logger.error(f"Error during bot shutdown: {e}")
-            print(f"❌ Error during shutdown: {e}")
+                await message.reply(response)
+                logger.info(f"Responded to '{keyword}' with '{response}' in {chat_id}")
+                await client.send_message(
+                    configVars.LOG_CHANNEL,
+                    f"Responded to '{keyword}' in {chat_id}"
+                )
+            except Exception as e:
+                logger.error(f"Error responding to filter: {str(e)}")
+                await client.send_message(
+                    configVars.LOG_CHANNEL,
+                    f"Failed to respond in {chat_id}: {str(e)}"
+                )
 
+# Start the bot
 async def main():
-    """Main function to run the bot"""
-    bot = TelegramBot()
-    
-    try:
-        print("🚀 Initializing Telegram Reaction & Filter Bot...")
-        await bot.start()
-        
-    except KeyboardInterrupt:
-        logger.info("Bot interrupted by user (Ctrl+C)")
-        print("\n⚠️ Bot interrupted by user")
-        
-    except Exception as e:
-        logger.error(f"Unexpected error in main: {e}")
-        print(f"❌ Unexpected error: {e}")
-        
-    finally:
-        await bot.stop()
-
-def check_environment():
-    """Check if environment is properly configured"""
-    try:
-        print("🔍 Checking environment configuration...")
-        
-        # Check if config can be imported
-        from config import Config
-        
-        # Basic validation
-        missing_vars = []
-        
-        if not Config.API_ID or Config.API_ID == 12345678:
-            missing_vars.append("API_ID")
-            
-        if not Config.API_HASH or Config.API_HASH == 'your_api_hash_here':
-            missing_vars.append("API_HASH")
-            
-        if not Config.BOT_TOKEN or Config.BOT_TOKEN == 'your_bot_token_here':
-            missing_vars.append("BOT_TOKEN")
-            
-        if not Config.ADMINS or Config.ADMINS == [123456789]:
-            missing_vars.append("ADMINS")
-        
-        if missing_vars:
-            print(f"❌ Missing or invalid configuration for: {', '.join(missing_vars)}")
-            print("📝 Please check your .env file or environment variables")
-            return False
-        
-        print("✅ Environment configuration looks good!")
-        return True
-        
-    except ImportError as e:
-        print(f"❌ Import error: {e}")
-        print("📝 Make sure all required files are present")
-        return False
-    except Exception as e:
-        print(f"❌ Configuration error: {e}")
-        return False
+    await app.start()
+    logger.info("Bot started")
+    await asyncio.Event().wait()  # Keep the bot running
 
 if __name__ == "__main__":
-    try:
-        # Check environment before starting
-        if not check_environment():
-            print("\n❌ Environment check failed. Please fix the issues above.")
-            exit(1)
-        
-        # Run the bot
-        asyncio.run(main())
-        
-    except KeyboardInterrupt:
-        print("\n👋 Bot terminated by user")
-        
-    except Exception as e:
-        logger.error(f"Fatal error in __main__: {e}")
-        print(f"❌ Fatal error: {e}")
-        exit(1)
-        
-    finally:
-        print("🔄 Cleaning up...")
-        # Additional cleanup if needed
-        try:
-            # Cancel any remaining tasks
-            pending = asyncio.all_tasks()
-            for task in pending:
-                task.cancel()
-        except:
-            pass
-        
-        print("✅ Cleanup completed!")
+    asyncio.run(main())
