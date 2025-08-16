@@ -4,25 +4,54 @@ from pyrogram.types import Message
 from config_vars import configVars
 import random
 import logging
-from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
+import json
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize MongoDB
-try:
-    mongo_client = MongoClient(configVars.DB_URI)
-    db = mongo_client["AutoReactionBot"]
-    groups_collection = db["connected_groups"]
-    filters_collection = db["filters"]
-    # Test connection
-    mongo_client.admin.command("ping")
-    logger.info("Connected to MongoDB")
-except ConnectionFailure as e:
-    logger.error(f"Failed to connect to MongoDB: {str(e)}")
-    raise SystemExit("MongoDB connection failed. Please check DB_URI.")
+# Configure Cloudinary
+cloudinary.config(
+    cloud_name=configVars.CLOUDINARY_URL.split('@')[-1],
+    api_key=configVars.CLOUDINARY_URL.split('://')[1].split(':')[0],
+    api_secret=configVars.CLOUDINARY_URL.split('://')[1].split(':')[1].split('@')[0]
+)
+
+# JSON file ID for Cloudinary
+DATA_FILE_ID = "bot_data.json"
+
+# Load data from Cloudinary
+def load_data():
+    try:
+        response = cloudinary.api.resource(DATA_FILE_ID, resource_type="raw")
+        data = json.loads(response["secure_url"].get(timeout=10).text)
+        configVars.CHAT_DATA["connected_groups"] = set(data.get("connected_groups", []))
+        configVars.CHAT_DATA["filters"] = data.get("filters", {})
+        logger.info("Loaded data from Cloudinary")
+    except Exception as e:
+        logger.warning(f"Failed to load data from Cloudinary: {str(e)}")
+        configVars.CHAT_DATA["connected_groups"] = set()
+        configVars.CHAT_DATA["filters"] = {}
+
+# Save data to Cloudinary
+def save_data():
+    try:
+        data = {
+            "connected_groups": list(configVars.CHAT_DATA["connected_groups"]),
+            "filters": configVars.CHAT_DATA["filters"]
+        }
+        cloudinary.uploader.upload(
+            json.dumps(data),
+            public_id=DATA_FILE_ID,
+            resource_type="raw",
+            invalidate=True
+        )
+        logger.info("Saved data to Cloudinary")
+    except Exception as e:
+        logger.error(f"Failed to save data to Cloudinary: {str(e)}")
 
 # Initialize the bot
 app = Client(
@@ -32,13 +61,8 @@ app = Client(
     bot_token=configVars.BOT_TOKEN
 )
 
-# Initialize in-memory cache
-configVars.CHAT_DATA["connected_groups"] = set(
-    doc["group_id"] for doc in groups_collection.find()
-)
-configVars.CHAT_DATA["filters"] = {
-    doc["keyword"]: doc["response"] for doc in filters_collection.find()
-}
+# Load data on startup
+load_data()
 
 # Helper function to check if user is admin
 def is_admin(user_id):
@@ -69,13 +93,8 @@ async def connect_command(client: Client, message: Message):
             await message.reply("Invalid group ID. Please provide a valid group ID.")
             return
 
-        # Save to MongoDB and cache
-        groups_collection.update_one(
-            {"group_id": group_id},
-            {"$set": {"group_id": group_id}},
-            upsert=True
-        )
         configVars.CHAT_DATA["connected_groups"].add(group_id)
+        save_data()  # Save to Cloudinary
         await message.reply(f"Connected to group {group_id}.")
         await client.send_message(
             configVars.LOG_CHANNEL,
@@ -99,13 +118,8 @@ async def filter_command(client: Client, message: Message):
 
     keyword = args[1].lower()
     response = args[2]
-    # Save to MongoDB and cache
-    filters_collection.update_one(
-        {"keyword": keyword},
-        {"$set": {"keyword": keyword, "response": response}},
-        upsert=True
-    )
     configVars.CHAT_DATA["filters"][keyword] = response
+    save_data()  # Save to Cloudinary
     await message.reply(f"Filter set: '{keyword}' -> '{response}'")
     await client.send_message(
         configVars.LOG_CHANNEL,
@@ -129,9 +143,8 @@ async def delfilter_command(client: Client, message: Message):
         await message.reply(f"No filter found for keyword: '{keyword}'")
         return
 
-    # Remove from MongoDB and cache
-    filters_collection.delete_one({"keyword": keyword})
     del configVars.CHAT_DATA["filters"][keyword]
+    save_data()  # Save to Cloudinary
     await message.reply(f"Filter for '{keyword}' deleted.")
     await client.send_message(
         configVars.LOG_CHANNEL,
@@ -182,24 +195,4 @@ async def handle_group_message(client: Client, message: Message):
     for keyword, response in configVars.CHAT_DATA["filters"].items():
         if keyword in message_text:
             try:
-                await message.reply(response)
-                logger.info(f"Responded to '{keyword}' with '{response}' in {chat_id}")
-                await client.send_message(
-                    configVars.LOG_CHANNEL,
-                    f"Responded to '{keyword}' in {chat_id}"
-                )
-            except Exception as e:
-                logger.error(f"Error responding to filter: {str(e)}")
-                await client.send_message(
-                    configVars.LOG_CHANNEL,
-                    f"Failed to respond in {chat_id}: {str(e)}"
-                )
-
-# Start the bot
-async def main():
-    await app.start()
-    logger.info("Bot started")
-    await asyncio.Event().wait()  # Keep the bot running
-
-if __name__ == "__main__":
-    asyncio.run(main())
+                await message.reply(response
