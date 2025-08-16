@@ -2,7 +2,7 @@ from os import environ
 
 # Configuration variables for the application
 class configVars:
-    BOT_TOKEN = environ.get("BOT_TOKEN", "7723147652:AAGyF6qIgG8_RGk6dHxfamDbdb1IAubZXxo")
+    BOT_TOKEN = environ.get("BOT_TOKEN", "8090595880:AAH5w6sgXU38DxoZ19T_Hfm-x7cZWcOapG4")
     API_ID = int(environ.get("API_ID", 28723907))
     API_HASH = environ.get("API_HASH", "390ab5f4798822d2a0eb5b85c4fb7d6c")
     LOG_CHANNEL = int(environ.get("LOG_CHANNEL", -1002077780554))
