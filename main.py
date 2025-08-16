@@ -1,198 +1,91 @@
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from config_vars import configVars
-import random
-import logging
-import json
-import cloudinary
-import cloudinary.uploader
-import cloudinary.api
+import os
+from database import init_db, get_connected_groups, is_group_connected
+from reactions import handle_reactions
+from filters_handler import handle_filters, filter_command, list_filters_command, del_filter_command
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Bot configuration
+API_ID = "your_api_id"
+API_HASH = "your_api_hash"
+BOT_TOKEN = "your_bot_token"
 
-# Configure Cloudinary
-cloudinary.config(
-    cloud_name=configVars.CLOUDINARY_URL.split('@')[-1],
-    api_key=configVars.CLOUDINARY_URL.split('://')[1].split(':')[0],
-    api_secret=configVars.CLOUDINARY_URL.split('://')[1].split(':')[1].split('@')[0]
-)
+app = Client("telegram_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# JSON file ID for Cloudinary
-DATA_FILE_ID = "bot_data.json"
-
-# Load data from Cloudinary
-def load_data():
-    try:
-        response = cloudinary.api.resource(DATA_FILE_ID, resource_type="raw")
-        data = json.loads(response["secure_url"].get(timeout=10).text)
-        configVars.CHAT_DATA["connected_groups"] = set(data.get("connected_groups", []))
-        configVars.CHAT_DATA["filters"] = data.get("filters", {})
-        logger.info("Loaded data from Cloudinary")
-    except Exception as e:
-        logger.warning(f"Failed to load data from Cloudinary: {str(e)}")
-        configVars.CHAT_DATA["connected_groups"] = set()
-        configVars.CHAT_DATA["filters"] = {}
-
-# Save data to Cloudinary
-def save_data():
-    try:
-        data = {
-            "connected_groups": list(configVars.CHAT_DATA["connected_groups"]),
-            "filters": configVars.CHAT_DATA["filters"]
-        }
-        cloudinary.uploader.upload(
-            json.dumps(data),
-            public_id=DATA_FILE_ID,
-            resource_type="raw",
-            invalidate=True
-        )
-        logger.info("Saved data to Cloudinary")
-    except Exception as e:
-        logger.error(f"Failed to save data to Cloudinary: {str(e)}")
-
-# Initialize the bot
-app = Client(
-    "AutoReactionBot",
-    api_id=configVars.API_ID,
-    api_hash=configVars.API_HASH,
-    bot_token=configVars.BOT_TOKEN
-)
-
-# Load data on startup
-load_data()
-
-# Helper function to check if user is admin
-def is_admin(user_id):
-    return user_id in configVars.ADMINS
-
-# Command: /start
 @app.on_message(filters.command("start") & filters.private)
-async def start_command(client: Client, message: Message):
-    await message.reply(configVars.START_MESSAGE)
+async def start_command(client, message: Message):
+    await message.reply_text(
+        "**Available Commands:**\n\n"
+        "/connect -100xxxxxxx - Connect bot to a group\n"
+        "/filter keyword response - Set auto-reply filter\n"
+        "/filters - List all filters\n"
+        "/delfilter keyword - Delete a filter"
+    )
 
-# Command: /connect <group_id>
 @app.on_message(filters.command("connect") & filters.private)
-async def connect_command(client: Client, message: Message):
-    if not is_admin(message.from_user.id):
-        await message.reply("Only admins can use this command.")
-        return
-
-    args = message.text.split()
-    if len(args) != 2:
-        await message.reply("Usage: /connect <group_id>")
-        return
-
+async def connect_command(client, message: Message):
     try:
-        group_id = int(args[1])
-        # Verify if the bot is in the group
-        chat = await client.get_chat(group_id)
-        if chat.type not in ["group", "supergroup"]:
-            await message.reply("Invalid group ID. Please provide a valid group ID.")
+        if len(message.command) < 2:
+            await message.reply_text("Usage: /connect -100xxxxxxx")
             return
-
-        configVars.CHAT_DATA["connected_groups"].add(group_id)
-        save_data()  # Save to Cloudinary
-        await message.reply(f"Connected to group {group_id}.")
-        await client.send_message(
-            configVars.LOG_CHANNEL,
-            f"Connected to group {group_id} by {message.from_user.id}"
-        )
+        
+        chat_id = int(message.command[1])
+        user_id = message.from_user.id
+        
+        # Check if user is admin in the target group
+        try:
+            member = await client.get_chat_member(chat_id, user_id)
+            if member.status not in ["administrator", "creator"]:
+                await message.reply_text("You must be an admin in that group!")
+                return
+        except:
+            await message.reply_text("Invalid group ID or bot is not in the group!")
+            return
+        
+        # Save connection to database
+        from database import save_connection
+        await save_connection(chat_id, user_id)
+        
+        await message.reply_text(f"Bot connected to group {chat_id} successfully!")
+        
+    except ValueError:
+        await message.reply_text("Invalid group ID format!")
     except Exception as e:
-        await message.reply(f"Error: {str(e)}")
-        logger.error(f"Connect command error: {str(e)}")
+        await message.reply_text(f"Error: {str(e)}")
 
-# Command: /filter <keyword> <response>
-@app.on_message(filters.command("filter") & filters.private)
-async def filter_command(client: Client, message: Message):
-    if not is_admin(message.from_user.id):
-        await message.reply("Only admins can use this command.")
-        return
-
-    args = message.text.split(maxsplit=2)
-    if len(args) < 3:
-        await message.reply("Usage: /filter <keyword> <response>")
-        return
-
-    keyword = args[1].lower()
-    response = args[2]
-    configVars.CHAT_DATA["filters"][keyword] = response
-    save_data()  # Save to Cloudinary
-    await message.reply(f"Filter set: '{keyword}' -> '{response}'")
-    await client.send_message(
-        configVars.LOG_CHANNEL,
-        f"Filter added: '{keyword}' -> '{response}' by {message.from_user.id}"
-    )
-
-# Command: /delfilter <keyword>
-@app.on_message(filters.command("delfilter") & filters.private)
-async def delfilter_command(client: Client, message: Message):
-    if not is_admin(message.from_user.id):
-        await message.reply("Only admins can use this command.")
-        return
-
-    args = message.text.split()
-    if len(args) != 2:
-        await message.reply("Usage: /delfilter <keyword>")
-        return
-
-    keyword = args[1].lower()
-    if keyword not in configVars.CHAT_DATA["filters"]:
-        await message.reply(f"No filter found for keyword: '{keyword}'")
-        return
-
-    del configVars.CHAT_DATA["filters"][keyword]
-    save_data()  # Save to Cloudinary
-    await message.reply(f"Filter for '{keyword}' deleted.")
-    await client.send_message(
-        configVars.LOG_CHANNEL,
-        f"Filter deleted: '{keyword}' by {message.from_user.id}"
-    )
-
-# Command: /listfilters
-@app.on_message(filters.command("listfilters") & filters.private)
-async def listfilters_command(client: Client, message: Message):
-    if not is_admin(message.from_user.id):
-        await message.reply("Only admins can use this command.")
-        return
-
-    if not configVars.CHAT_DATA["filters"]:
-        await message.reply("No filters set.")
-        return
-
-    filter_list = "\n".join(
-        f"- '{k}' -> '{v}'" for k, v in configVars.CHAT_DATA["filters"].items()
-    )
-    await message.reply(f"Current filters:\n{filter_list}")
-    await client.send_message(
-        configVars.LOG_CHANNEL,
-        f"Filter list requested by {message.from_user.id}"
-    )
-
-# Handle new messages in connected groups
-@app.on_message(filters.group & filters.text)
-async def handle_group_message(client: Client, message: Message):
+@app.on_message(filters.group & ~filters.bot)
+async def group_message_handler(client, message: Message):
     chat_id = message.chat.id
-    if chat_id not in configVars.CHAT_DATA["connected_groups"]:
+    
+    # Check if group is connected
+    if not await is_group_connected(chat_id):
         return
+    
+    # Handle reactions
+    await handle_reactions(client, message)
+    
+    # Handle filters
+    await handle_filters(client, message)
 
-    # Auto-reaction with random emoji
-    try:
-        emoji = random.choice(configVars.R_EMOJIS)
-        await client.set_reaction(chat_id, message.id, emoji)
-        logger.info(f"Reacted with {emoji} to message {message.id} in {chat_id}")
-    except Exception as e:
-        logger.error(f"Error setting reaction: {str(e)}")
-        await client.send_message(
-            configVars.LOG_CHANNEL,
-            f"Failed to react in {chat_id}: {str(e)}"
-        )
+# Filter management commands
+@app.on_message(filters.command("filter") & filters.private)
+async def set_filter(client, message: Message):
+    await filter_command(client, message)
 
-    # Check for keyword filters
-    message_text = message.text.lower()
-    for keyword, response in configVars.CHAT_DATA["filters"].items():
-        if keyword in message_text:
-            try:
-                await message.reply(response
+@app.on_message(filters.command("filters") & filters.private) 
+async def list_filters(client, message: Message):
+    await list_filters_command(client, message)
+
+@app.on_message(filters.command("delfilter") & filters.private)
+async def delete_filter(client, message: Message):
+    await del_filter_command(client, message)
+
+async def main():
+    await init_db()
+    await app.start()
+    print("Bot started successfully!")
+    await asyncio.Event().wait()
+
+if __name__ == "__main__":
+    asyncio.run(main())
